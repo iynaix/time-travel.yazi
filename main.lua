@@ -23,7 +23,7 @@ end
 --- Verify if `sudo` is already authenticated
 --- @return boolean
 local function sudo_already()
-    local status = Command("sudo"):args({ "--validate", "--non-interactive" }):status()
+    local status = Command("sudo"):arg({ "--validate", "--non-interactive" }):status()
     assert(status, "Failed to run `sudo --validate --non-interactive`")
     return status.success
 end
@@ -36,12 +36,12 @@ end
 ---  nil: no error
 ---  1: sudo failed
 local function run_with_sudo(program, args)
-    local cmd = Command("sudo"):args({ program, table.unpack(args) }):stdout(Command.PIPED):stderr(Command.PIPED)
+    local cmd = Command("sudo"):arg({ program, table.unpack(args) }):stdout(Command.PIPED):stderr(Command.PIPED)
     if sudo_already() then
         return cmd:output()
     end
 
-    local permit = ya.hide()
+    local permit = ui.hide()
     print(string.format("Sudo password required to run: `%s %s`", program, table.concat(args, " ")))
     local output = cmd:output()
     permit:drop()
@@ -67,7 +67,7 @@ end
 ---@param cwd string
 ---@return string|nil
 local get_filesystem_type = function(cwd)
-    local stat, _ = Command("stat"):args({ "-f", "-c", "%T", cwd }):output()
+    local stat, _ = Command("stat"):arg({ "-f", "-c", "%T", cwd }):output()
     if not stat.status.success then
         return nil
     end
@@ -77,7 +77,7 @@ end
 ---@param cwd string
 ---@return string|nil
 local zfs_dataset = function(cwd)
-    local df, _ = Command("df"):args({ "--output=source", cwd }):output()
+    local df, _ = Command("df"):arg({ "--output=source", cwd }):output()
     local dataset = nil
     for line in df.stdout:gmatch("[^\r\n]+") do
         -- dataset is last line in output
@@ -89,7 +89,7 @@ end
 ---@param dataset string
 ---@return string|nil
 local zfs_mountpoint = function(dataset)
-    local zfs, _ = Command("zfs"):args({ "get", "-H", "-o", "value", "mountpoint", dataset }):output()
+    local zfs, _ = Command("zfs"):arg({ "get", "-H", "-o", "value", "mountpoint", dataset }):output()
 
     -- not a dataset!
     if not zfs.status.success then
@@ -157,7 +157,7 @@ end
 ---@return Snapshot[]
 local zfs_snapshots = function(dataset, mountpoint, relative)
     -- -S is for reverse order
-    local zfs_snapshots, _ = Command("zfs"):args({ "list", "-H", "-t", "snapshot", "-o", "name", "-S", "creation",
+    local zfs_snapshots, _ = Command("zfs"):arg({ "list", "-H", "-t", "snapshot", "-o", "name", "-S", "creation",
             dataset })
         :output()
 
@@ -183,7 +183,7 @@ end
 ---@param cwd string
 ---@return string|nil
 local function btrfs_mountpoint(cwd)
-    local cmd, _ = Command("findmnt"):args({ "-no", "TARGET", "-T", cwd }):output()
+    local cmd, _ = Command("findmnt"):arg({ "-no", "TARGET", "-T", cwd }):output()
     if not cmd.status.success then
         return nil
     end
@@ -329,7 +329,7 @@ return {
         end
 
         if action == "exit" then
-            ya.manager_emit("cd", { latest_path })
+            ya.emit("cd", { latest_path })
             return
         end
 
@@ -343,7 +343,7 @@ return {
         local find_and_goto_snapshot = function(start_idx, end_idx, step)
             if start_idx == 0 then
                 -- going from newest snapshot to current state
-                return ya.manager_emit("cd", { latest_path })
+                return ya.emit("cd", { latest_path })
             elseif start_idx < 0 then
                 return notify_warn("No earlier snapshots found.")
             elseif start_idx > #snapshots then
@@ -353,7 +353,7 @@ return {
             for i = start_idx, end_idx, step do
                 local snapshot_dir = snapshots[i].path
                 if io.open(snapshot_dir, "r") then
-                    return ya.manager_emit("cd", { snapshot_dir })
+                    return ya.emit("cd", { snapshot_dir })
                 end
             end
 
