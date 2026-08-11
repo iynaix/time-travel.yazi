@@ -30,6 +30,11 @@ run = "plugin time-travel next"
 desc = "Go to next snapshot"
 
 [[manager.prepend_keymap]]
+on = ["z", "s"]
+run = "plugin time-travel select"
+desc = "Select a snapshot"
+
+[[manager.prepend_keymap]]
 on = ["z", "e"]
 run = "plugin time-travel exit"
 desc = "Exit browsing snapshots"
