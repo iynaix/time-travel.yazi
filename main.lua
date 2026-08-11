@@ -148,7 +148,7 @@ local zfs_relative = function(cwd, mountpoint)
 end
 
 ---@class Snapshot
----@field name string
+---@field id string
 ---@field path string
 
 ---@param dataset string
@@ -273,13 +273,66 @@ local function btrfs_snapshots(mountpoint, current_uuid, current_parent_uuid)
     return { snapshots = snapshots, latest_path = latest_path, current_snapshot_id = current_snapshot_id }
 end
 
+local WHICH_KEY_ALPHABET = "1234567890abcdefghijklmnopqrstuvwxyz"
+
+--- Assigns every entry a chord of the same length, so that no chord is a prefix of another. Chords longer than one
+--- key make `which` narrow the list down as they are typed, which keeps long snapshot lists usable.
+---@param count integer
+---@return string[][]
+local which_keys = function(count)
+    local base = #WHICH_KEY_ALPHABET
+    local width = 1
+    while base ^ width < count do
+        width = width + 1
+    end
+
+    local keys = {}
+    for i = 1, count do
+        local remaining = i - 1
+        local chord = {}
+        for pos = width, 1, -1 do
+            local digit = remaining % base
+            chord[pos] = WHICH_KEY_ALPHABET:sub(digit + 1, digit + 1)
+            remaining = math.floor(remaining / base)
+        end
+        keys[i] = chord
+    end
+    return keys
+end
+
+---@param snapshots Snapshot[]
+---@param current_snapshot_id string
+local select_snapshot = function(snapshots, current_snapshot_id)
+    local keys = which_keys(#snapshots)
+
+    local cands = {}
+    for i, snapshot in ipairs(snapshots) do
+        local desc = snapshot.id == current_snapshot_id and (snapshot.id .. " (current)") or snapshot.id
+        cands[i] = { on = keys[i], desc = desc }
+    end
+
+    local idx = ya.which { cands = cands }
+    if idx == nil then
+        return
+    end
+
+    local snapshot = snapshots[idx]
+    local dir = io.open(snapshot.path, "r")
+    if dir == nil then
+        return notify_warn("Current directory does not exist in snapshot " .. snapshot.id .. ".")
+    end
+    dir:close()
+
+    ya.emit("cd", { snapshot.path })
+end
+
 return {
     entry = function(_, job)
         local action = job.args[1]
         local cwd = get_cwd()
 
-        if action ~= "exit" and action ~= "prev" and action ~= "next" then
-            return notify_error("Invalid action: " .. action)
+        if action ~= "exit" and action ~= "prev" and action ~= "next" and action ~= "select" then
+            return notify_error("Invalid action: " .. tostring(action))
         end
 
         local fs_type = get_filesystem_type(cwd)
@@ -335,6 +388,10 @@ return {
 
         if #snapshots == 0 then
             return notify_warn("No snapshots found.")
+        end
+
+        if action == "select" then
+            return select_snapshot(snapshots, current_snapshot_id)
         end
 
         ---@param start_idx integer
