@@ -1,11 +1,11 @@
 ---@param msg string
 local notify_warn = function(msg)
-    ya.notify { title = "ZFS", content = msg, level = "warn", timeout = 5 }
+    ya.notify { title = "Time Travel", content = msg, level = "warn", timeout = 5 }
 end
 
 ---@param msg string
 local notify_error = function(msg)
-    ya.notify { title = "ZFS", content = msg, level = "error", timeout = 5 }
+    ya.notify { title = "Time Travel", content = msg, level = "error", timeout = 5 }
 end
 
 ---@param arr table
@@ -225,43 +225,38 @@ local function btrfs_snapshots(mountpoint, current_uuid, current_parent_uuid)
         return {}
     end
 
+    -- The subvolume whose history we are walking: either the live subvolume
+    -- itself, or the one the current snapshot was taken from.
+    local origin_uuid = current_uuid
+    if current_parent_uuid ~= nil and current_parent_uuid ~= "-" then
+        origin_uuid = current_parent_uuid
+    end
+
     local snapshots = {}
     local latest_path = ""
     local current_snapshot_id = ""
 
     for line in snapshots_cmd.stdout:gmatch("[^\r\n]+") do
         local pattern = "ID (%d+) gen %d+ top level %d+ parent_uuid ([%w-]+)%s+uuid ([%w-]+) path (%S+)"
-        -- Extract the fields
         local subvol_id, parent_uuid, uuid, name = line:match(pattern)
-        parent_uuid = trim(parent_uuid)
 
-        local path = mountpoint .. "/" .. name
-        local is_parent = false
+        if subvol_id then
+            local path = mountpoint .. "/" .. name
 
-        if current_parent_uuid == "-" then
-            if parent_uuid == "-" and uuid == current_uuid then
-                is_parent = true
+            if uuid == origin_uuid then
+                -- the live subvolume
+                latest_path = path
+            elseif parent_uuid == origin_uuid then
+                -- a snapshot of the live subvolume (and only of it)
+                if uuid == current_uuid then
+                    current_snapshot_id = name
+                end
+                table.insert(snapshots, {
+                    id = name,
+                    subvol_id = tonumber(subvol_id), -- used only for sorting
+                    path = path,
+                })
             end
-        else
-            if uuid == current_parent_uuid then
-                is_parent = true
-            end
-        end
-
-        if is_parent then
-            latest_path = path
-        end
-
-        if uuid == current_uuid and not is_parent then
-            current_snapshot_id = name
-        end
-
-        if not is_parent then
-            table.insert(snapshots, {
-                id = name,
-                subvol_id = subvol_id, -- used only for sorting
-                path = path,
-            })
         end
     end
 
