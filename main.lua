@@ -190,6 +190,50 @@ local function btrfs_mountpoint(cwd)
     return trim(cmd.stdout)
 end
 
+---@param path string
+---@return string|nil
+local function parent_dir(path)
+    if path == "/" then
+        return nil
+    end
+    local parent = path:match("^(.*)/[^/]+$")
+    if parent == nil then
+        return nil
+    end
+    return parent == "" and "/" or parent
+end
+
+--- Walks up from `cwd` to the nearest subvolume root. On BTRFS the root
+--- directory of every subvolume has inode 256.
+---@param cwd string
+---@return string|nil
+local function btrfs_subvolume_root(cwd)
+    local dir = cwd
+    while dir do
+        local out = Command("stat"):arg({ "-c", "%i", dir }):output()
+        if out and out.status.success and trim(out.stdout) == "256" then
+            return dir
+        end
+        dir = parent_dir(dir)
+    end
+    return nil
+end
+
+--- Path of `cwd` relative to its subvolume root: "" at the root itself,
+--- otherwise starting with "/".
+---@param cwd string
+---@param subvol_root string
+---@return string
+local function btrfs_relative(cwd, subvol_root)
+    if cwd == subvol_root then
+        return ""
+    end
+    if subvol_root == "/" then
+        return cwd
+    end
+    return cwd:sub(#subvol_root + 1)
+end
+
 ---Returns the current uuid and the parent uuid
 ---@param cwd string
 ---@return string|nil, string|nil
@@ -218,8 +262,9 @@ end
 ---@param mountpoint string
 ---@param current_uuid string
 ---@param current_parent_uuid string|nil
+---@param relative string
 ---@return { snapshots: Snapshot[], latest_path: string, current_snapshot_id: string }
-local function btrfs_snapshots(mountpoint, current_uuid, current_parent_uuid)
+local function btrfs_snapshots(mountpoint, current_uuid, current_parent_uuid, relative)
     local snapshots_cmd, _ = run_with_sudo("btrfs", { "subvolume", "list", "-q", "-u", mountpoint })
     if not snapshots_cmd then
         return {}
@@ -241,7 +286,7 @@ local function btrfs_snapshots(mountpoint, current_uuid, current_parent_uuid)
         local subvol_id, parent_uuid, uuid, name = line:match(pattern)
 
         if subvol_id then
-            local path = mountpoint .. "/" .. name
+            local path = mountpoint .. "/" .. name .. relative
 
             if uuid == origin_uuid then
                 -- the live subvolume
@@ -364,13 +409,21 @@ return {
             snapshots = zfs_snapshots(dataset, mountpoint, relative)
         elseif fs_type == "btrfs" then
             local mountpoint = btrfs_mountpoint(cwd)
-            local parent_uuid, uuid = btrfs_uuids(cwd)
+            local subvol_root = btrfs_subvolume_root(cwd)
 
-            if mountpoint == nil or uuid == nil then
+            if mountpoint == nil or subvol_root == nil then
                 return notify_error("Current directory is not within a BTRFS subvolume.")
             end
 
-            local ret = btrfs_snapshots(mountpoint, uuid, parent_uuid)
+            -- `btrfs subvolume show` only accepts a subvolume root
+            local parent_uuid, uuid = btrfs_uuids(subvol_root)
+            if uuid == nil then
+                return notify_error("Current directory is not within a BTRFS subvolume.")
+            end
+
+            local relative = btrfs_relative(cwd, subvol_root)
+
+            local ret = btrfs_snapshots(mountpoint, uuid, parent_uuid, relative)
             snapshots = ret.snapshots
             latest_path = ret.latest_path
             current_snapshot_id = ret.current_snapshot_id
